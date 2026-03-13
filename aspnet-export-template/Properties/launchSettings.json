@@ -1,0 +1,12 @@
+{
+  "profiles": {
+    "aspnet-export-template": {
+      "commandName": "Project",
+      "launchBrowser": false,
+      "environmentVariables": {
+        "ASPNETCORE_ENVIRONMENT": "Development"
+      },
+      "applicationUrl": "https://localhost:57034;http://localhost:57035"
+    }
+  }
+}
