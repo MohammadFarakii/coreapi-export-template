@@ -57,7 +57,12 @@ namespace AspNetExportTemplate.Services
                                 var data = await _connector.GetAttachmentAsync(at.Url!);
                                 if (data != null)
                                 {
-                                    await File.WriteAllBytesAsync(Path.Combine(attachmentsPath, at.Filename ?? at.Id), data);
+                                    var fileName = string.IsNullOrWhiteSpace(at.Filename)
+                                        //? (at.Id ?? Guid.NewGuid().ToString()) // TODO: Add this line instead of below line if necessary
+                                        ? at.Id
+                                        : at.Filename;
+
+                                    await File.WriteAllBytesAsync(Path.Combine(attachmentsPath, fileName), data);
                                 }
                             }
                         }
