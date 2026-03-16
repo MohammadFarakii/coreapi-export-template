@@ -36,6 +36,11 @@ namespace AspNetExportTemplate.Services
                 }
 
                 res.EnsureSuccessStatusCode();
+
+                // Read raw JSON for debugging
+                //var json = await res.Content.ReadAsStringAsync();
+                //Console.WriteLine("RAW JSON PAGE:\n" + json);
+
                 var stream = await res.Content.ReadAsStreamAsync();
                 var apiResponse = await JsonSerializer.DeserializeAsync<ApiResponse<T>>(stream, _jsonOptions);
                 if (apiResponse?.Results != null)

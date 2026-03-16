@@ -80,7 +80,7 @@ namespace AspNetExportTemplate.Models
     public class Message : Resource
     {
         [JsonPropertyName("created_at")]
-        public long CreatedAt { get; set; }
+        public double CreatedAt { get; set; }
 
         [JsonPropertyName("subject")]
         public string? Subject { get; set; }
@@ -119,7 +119,7 @@ namespace AspNetExportTemplate.Models
         public string? Status { get; set; }
 
         [JsonPropertyName("created_at")]
-        public long CreatedAt { get; set; }
+        public double CreatedAt { get; set; }
     }
 
     public class ExportOptions
