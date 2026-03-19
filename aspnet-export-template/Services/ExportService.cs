@@ -92,10 +92,18 @@ namespace AspNetExportTemplate.Services
 
             if (options.ShouldIncludeComments)
             {
-                await foreach (var c in _connector.StreamPaginatedRequestAsync<Comment>($"https://api2.frontapp.com/conversations/{conv.Id}/comments"))
+                try
                 {
-                    var commentFile = Path.Combine(convPath, $"{c.PostedAt}-comment-{c.Id}.json").Replace("\\", "/");
-                    await UploadStringAsync(commentFile, JsonSerializer.Serialize(c, _jsonOptions));
+                    await foreach (var c in _connector.StreamPaginatedRequestAsync<Comment>($"https://api2.frontapp.com/conversations/{conv.Id}/comments"))
+                    {
+                        var commentFile = Path.Combine(convPath, $"{c.PostedAt}-comment-{c.Id}.json").Replace("\\", "/");
+                        await UploadStringAsync(commentFile, JsonSerializer.Serialize(c, _jsonOptions));
+                    }
+                }
+                catch (Exception ex)
+                {
+
+                    throw;
                 }
             }
         }

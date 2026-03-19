@@ -101,7 +101,9 @@ namespace AspNetExportTemplate.Models
     public class Comment : Resource
     {
         [JsonPropertyName("posted_at")]
-        public long PostedAt { get; set; }
+        public double PostedAt { get; set; }
+        //public long PostedAt { get; set; }
+        //public string PostedAt { get; set; }
 
         [JsonPropertyName("body")]
         public string? Body { get; set; }

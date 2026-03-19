@@ -67,6 +67,10 @@ namespace AspNetExportTemplate.Services
                 }
 
                 res.EnsureSuccessStatusCode();
+
+                // Get the response as a string for debugging
+                var jsonString = await res.Content.ReadAsStringAsync();
+
                 var stream = await res.Content.ReadAsStreamAsync();
                 var apiResponse = await JsonSerializer.DeserializeAsync<ApiResponse<T>>(stream, _jsonOptions);
                 if (apiResponse?.Results != null)
