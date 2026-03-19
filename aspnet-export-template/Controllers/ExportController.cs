@@ -56,8 +56,8 @@ namespace AspNetExportTemplate.Controllers
             int totalExported = 0;
             foreach (var inbox in inboxes)
             {
-                var result = await _exportService.ExportInboxAsync(inbox, options);
-                totalExported += result.Count;
+                var exported = await _exportService.ExportInboxAsync(inbox, options);
+                totalExported += exported;
             }
             return Ok(new { inboxCount = inboxes.Count, exported = totalExported });
         }

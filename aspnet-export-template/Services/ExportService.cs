@@ -3,6 +3,8 @@ using Azure.Storage.Blobs;
 using Azure.Storage.Blobs.Models;
 using System.Text.Json;
 using System.IO;
+using System.Linq;
+using System.Collections.Generic;
 
 namespace AspNetExportTemplate.Services
 {
@@ -32,64 +34,69 @@ namespace AspNetExportTemplate.Services
             _container = CreateContainerClient();
         }
 
-        public async Task<List<Conversation>> ExportSearchAsync(string searchText, long? after, List<string>? statuses, ExportOptions? options)
+        // Streamed search export: process each conversation as it arrives to minimize memory use
+        public async Task<int> ExportSearchAsync(string searchText, long? after, List<string>? statuses, ExportOptions? options)
         {
             var query = BuildSearchQuery(searchText, after, statuses);
             var url = $"https://api2.frontapp.com/conversations/search/{Uri.EscapeDataString(query)}";
-            var conversations = await _connector.MakePaginatedRequestAsync<Conversation>(url);
-            await ExportConversations(conversations, "search", options ?? new ExportOptions());
-            return conversations;
+            int exported = 0;
+            await foreach (var conv in _connector.StreamPaginatedRequestAsync<Conversation>(url))
+            {
+                await ExportConversationAsync(conv, "search", options ?? new ExportOptions());
+                exported++;
+            }
+            return exported;
         }
 
-        public async Task<List<Conversation>> ExportInboxAsync(Inbox inbox, ExportOptions? options)
+        // Streamed inbox export: process conversations one-by-one
+        public async Task<int> ExportInboxAsync(Inbox inbox, ExportOptions? options)
         {
             var url = $"https://api2.frontapp.com/inboxes/{inbox.Id}/conversations";
-            var conversations = await _connector.MakePaginatedRequestAsync<Conversation>(url);
             var path = SanitizeFileName(inbox.Name ?? inbox.Id);
-            await ExportConversations(conversations, path, options ?? new ExportOptions());
-            return conversations;
+            int exported = 0;
+            await foreach (var conv in _connector.StreamPaginatedRequestAsync<Conversation>(url))
+            {
+                await ExportConversationAsync(conv, path, options ?? new ExportOptions());
+                exported++;
+            }
+            return exported;
         }
 
-        private async Task ExportConversations(List<Conversation> conversations, string exportPath, ExportOptions options)
+        private async Task ExportConversationAsync(Conversation conv, string exportPath, ExportOptions options)
         {
-            foreach (var conv in conversations)
+            var convPath = Path.Combine(exportPath, conv.Id ?? Guid.NewGuid().ToString()).Replace("\\", "/");
+            var convJson = JsonSerializer.Serialize(conv, _jsonOptions);
+            await UploadStringAsync(Path.Combine(convPath, $"{conv.Id}.json").Replace("\\", "/"), convJson);
+
+            if (options.ShouldIncludeMessages)
             {
-                var convPath = Path.Combine(exportPath, conv.Id ?? Guid.NewGuid().ToString()).Replace("\\", "/");
-                var convJson = JsonSerializer.Serialize(conv, options: _jsonOptions);
-                await UploadStringAsync(Path.Combine(convPath, $"{conv.Id}.json").Replace("\\", "/"), convJson);
-
-                if (options.ShouldIncludeMessages)
+                await foreach (var msg in _connector.StreamPaginatedRequestAsync<Message>($"https://api2.frontapp.com/conversations/{conv.Id}/messages"))
                 {
-                    var messages = await _connector.MakePaginatedRequestAsync<Message>($"https://api2.frontapp.com/conversations/{conv.Id}/messages");
-                    foreach (var msg in messages)
-                    {
-                        var messageFile = Path.Combine(convPath, $"{msg.CreatedAt}-message-{msg.Id}.json").Replace("\\", "/");
-                        await UploadStringAsync(messageFile, JsonSerializer.Serialize(msg, _jsonOptions));
+                    var messageFile = Path.Combine(convPath, $"{msg.CreatedAt}-message-{msg.Id}.json").Replace("\\", "/");
+                    await UploadStringAsync(messageFile, JsonSerializer.Serialize(msg, _jsonOptions));
 
-                        if (options.ShouldIncludeAttachments && msg.Attachments != null)
+                    if (options.ShouldIncludeAttachments && msg.Attachments != null)
+                    {
+                        var attachmentsPath = Path.Combine(convPath, "attachments", msg.Id ?? Guid.NewGuid().ToString()).Replace("\\", "/");
+                        foreach (var at in msg.Attachments)
                         {
-                            var attachmentsPath = Path.Combine(convPath, "attachments", msg.Id ?? Guid.NewGuid().ToString()).Replace("\\", "/");
-                            foreach (var at in msg.Attachments)
+                            var data = await _connector.GetAttachmentAsync(at.Url!);
+                            if (data != null)
                             {
-                                var data = await _connector.GetAttachmentAsync(at.Url!);
-                                if (data != null)
-                                {
-                                    var fileName = string.IsNullOrWhiteSpace(at.Filename) ? at.Id : at.Filename;
-                                    await UploadBytesAsync(Path.Combine(attachmentsPath, fileName).Replace("\\", "/"), data);
-                                }
+                                var fileName = string.IsNullOrWhiteSpace(at.Filename) ? at.Id : at.Filename;
+                                await UploadBytesAsync(Path.Combine(attachmentsPath, fileName).Replace("\\", "/"), data);
                             }
                         }
                     }
                 }
+            }
 
-                if (options.ShouldIncludeComments)
+            if (options.ShouldIncludeComments)
+            {
+                await foreach (var c in _connector.StreamPaginatedRequestAsync<Comment>($"https://api2.frontapp.com/conversations/{conv.Id}/comments"))
                 {
-                    var comments = await _connector.MakePaginatedRequestAsync<Comment>($"https://api2.frontapp.com/conversations/{conv.Id}/comments");
-                    foreach (var c in comments)
-                    {
-                        var commentFile = Path.Combine(convPath, $"{c.PostedAt}-comment-{c.Id}.json").Replace("\\", "/");
-                        await UploadStringAsync(commentFile, JsonSerializer.Serialize(c, _jsonOptions));
-                    }
+                    var commentFile = Path.Combine(convPath, $"{c.PostedAt}-comment-{c.Id}.json").Replace("\\", "/");
+                    await UploadStringAsync(commentFile, JsonSerializer.Serialize(c, _jsonOptions));
                 }
             }
         }
@@ -108,27 +115,34 @@ namespace AspNetExportTemplate.Services
             await blobClient.UploadAsync(ms, overwrite: true);
         }
 
+        /// <summary>
+        /// Count unique conversations already exported for given inbox (based on blob prefix). Uses the blob path format: {inbox}/{conversationId}/...
+        /// </summary>
+        public async Task<int> CountExportedConversationsAsync(Inbox inbox)
+        {
+            var prefix = SanitizeFileName(inbox.Name ?? inbox.Id) + "/";
+            var seen = new HashSet<string>();
+            await foreach (var blobItem in _container.GetBlobsAsync(prefix: prefix))
+            {
+                var parts = blobItem.Name.Split('/');
+                if (parts.Length >= 2) seen.Add(parts[1]);
+            }
+            return seen.Count;
+        }
+
         private string BuildSearchQuery(string text, long? after, List<string>? statuses)
         {
             var parts = new List<string>();
-            if (after.HasValue)
-            {
-                parts.Add($"after:{after.Value}");
-            }
-            if (statuses != null)
-            {
-                parts.AddRange(statuses.Select(s => $"is:{s}"));
-            }
+            if (after.HasValue) parts.Add($"after:{after.Value}");
+            if (statuses != null) parts.AddRange(statuses.Select(s => $"is:{s}"));
             parts.Add(text);
             return string.Join(' ', parts);
         }
 
         private string SanitizeFileName(string name)
         {
-            foreach (var c in Path.GetInvalidFileNameChars())
-            {
+            foreach (var c in Path.GetInvalidFileNameChars()) 
                 name = name.Replace(c, '_');
-            }
             return name;
         }
     }
