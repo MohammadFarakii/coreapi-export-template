@@ -30,8 +30,8 @@ namespace AspNetExportTemplate.Controllers
             var inboxes = await _connector.MakePaginatedRequestAsync<Inbox>("https://api2.frontapp.com/inboxes");
             var inbox = inboxes.FirstOrDefault(i => i.Id == id);
             if (inbox == null) return NotFound();
-            var result = await _exportService.ExportInboxAsync(inbox, options);
-            return Ok(new { exported = result.Count });
+            var exported = await _exportService.ExportInboxAsync(inbox, options);
+            return Ok(new { exported });
         }
 
         public class SearchRequest
@@ -45,8 +45,8 @@ namespace AspNetExportTemplate.Controllers
         [HttpPost("export/search")]
         public async Task<IActionResult> ExportSearch([FromBody] SearchRequest req)
         {
-            var convs = await _exportService.ExportSearchAsync(req.Query, req.After, req.Statuses, req.Options);
-            return Ok(new { exported = convs.Count });
+            var exported = await _exportService.ExportSearchAsync(req.Query, req.After, req.Statuses, req.Options);
+            return Ok(new { exported });
         }
 
         [HttpPost("export/inboxes")]
