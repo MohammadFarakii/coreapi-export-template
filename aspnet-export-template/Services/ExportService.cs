@@ -14,7 +14,6 @@ namespace AspNetExportTemplate.Services
         private readonly JsonSerializerOptions _jsonOptions = new() { WriteIndented = true };
         private readonly BlobContainerClient _container;
 
-        // Reads AZURE_STORAGE_CONNECTION_STRING and EXPORT_CONTAINER from env
         private static BlobContainerClient CreateContainerClient()
         {
             var conn = Environment.GetEnvironmentVariable("AZURE_STORAGE_CONNECTION_STRING");
@@ -48,7 +47,7 @@ namespace AspNetExportTemplate.Services
             return exported;
         }
 
-        // Streamed inbox export: process conversations one-by-one
+        // Streamed inbox export: process conversations one-by-one as it arrives to minimize memory use
         public async Task<int> ExportInboxAsync(Inbox inbox, ExportOptions? options)
         {
             var url = $"https://api2.frontapp.com/inboxes/{inbox.Id}/conversations";

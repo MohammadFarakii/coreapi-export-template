@@ -58,10 +58,6 @@ namespace AspNetExportTemplate.Services
             while (!string.IsNullOrEmpty(next))
             {
                 using var req = new HttpRequestMessage(HttpMethod.Get, next);
-                if (!string.IsNullOrEmpty(_apiKey))
-                {
-                    req.Headers.Authorization = new AuthenticationHeaderValue("Bearer", _apiKey);
-                }
                 using var res = await _client.SendAsync(req);
 
                 if (res.StatusCode == System.Net.HttpStatusCode.TooManyRequests)
