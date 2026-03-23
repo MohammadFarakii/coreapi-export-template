@@ -1,6 +1,8 @@
+using AspNetExportTemplate.Data;
 using AspNetExportTemplate.Models;
 using Azure.Storage.Blobs;
 using Azure.Storage.Blobs.Models;
+using Microsoft.EntityFrameworkCore;
 using System.Text.Json;
 using System.IO;
 using System.Linq;
@@ -11,6 +13,7 @@ namespace AspNetExportTemplate.Services
     public class ExportService
     {
         private readonly IFrontConnector _connector;
+        private readonly ExportDbContext _db;
         private readonly JsonSerializerOptions _jsonOptions = new() { WriteIndented = true };
         private readonly BlobContainerClient _container;
 
@@ -27,9 +30,10 @@ namespace AspNetExportTemplate.Services
             return client;
         }
 
-        public ExportService(IFrontConnector connector)
+        public ExportService(IFrontConnector connector, ExportDbContext db)
         {
             _connector = connector;
+            _db = db;
             _container = CreateContainerClient();
         }
 
@@ -38,11 +42,19 @@ namespace AspNetExportTemplate.Services
         {
             var query = BuildSearchQuery(searchText, after, statuses);
             var url = $"https://api2.frontapp.com/conversations/search/{Uri.EscapeDataString(query)}";
+            var resolvedOptions = options ?? new ExportOptions();
             int exported = 0;
             await foreach (var conv in _connector.StreamPaginatedRequestAsync<Conversation>(url))
             {
-                await ExportConversationAsync(conv, "search", options ?? new ExportOptions());
-                exported++;
+                try
+                {
+                    await ExportConversationAsync(conv, "search", resolvedOptions);
+                    exported++;
+                }
+                catch (Exception ex)
+                {
+                    await SaveFailedExportAsync(conv, "search", resolvedOptions, ex);
+                }
             }
             return exported;
         }
@@ -52,15 +64,58 @@ namespace AspNetExportTemplate.Services
         {
             var url = $"https://api2.frontapp.com/inboxes/{inbox.Id}/conversations";
             var path = SanitizeFileName(inbox.Name ?? inbox.Id);
+            var resolvedOptions = options ?? new ExportOptions();
             int exported = 0;
             await foreach (var conv in _connector.StreamPaginatedRequestAsync<Conversation>(url))
             {
-                await ExportConversationAsync(conv, path, options ?? new ExportOptions());
-                exported++;
+                try
+                {
+                    await ExportConversationAsync(conv, path, resolvedOptions);
+                    exported++;
+                }
+                catch (Exception ex)
+                {
+                    await SaveFailedExportAsync(conv, path, resolvedOptions, ex);
+                }
             }
             return exported;
         }
 
+        public async Task<(int succeeded, int failed)> RetryFailedExportsAsync()
+        {
+            var pending = await _db.FailedExports
+                .Where(f => f.Status == FailedExportStatus.Pending)
+                .ToListAsync();
+
+            int succeeded = 0, failed = 0;
+            foreach (var record in pending)
+            {
+                try
+                {
+                    var conv = JsonSerializer.Deserialize<Conversation>(record.ConversationJson, _jsonOptions)!;
+                    var options = JsonSerializer.Deserialize<ExportOptions>(record.OptionsJson) ?? new ExportOptions();
+                    await ExportConversationAsync(conv, record.ExportPath, options);
+                    record.Status = FailedExportStatus.Succeeded;
+                    record.RetryCount++;
+                    succeeded++;
+                }
+                catch (Exception ex)
+                {
+                    record.RetryCount++;
+                    record.LastError = ex.Message;
+                    if (record.RetryCount >= 3)
+                        record.Status = FailedExportStatus.PermanentlyFailed;
+                    failed++;
+                }
+            }
+            await _db.SaveChangesAsync();
+            return (succeeded, failed);
+        }
+
+        public Task<List<FailedExport>> GetFailedExportsAsync()
+        {
+            return _db.FailedExports.Where(f => f.Status == FailedExportStatus.Pending).ToListAsync();
+        }
         private async Task ExportConversationAsync(Conversation conv, string exportPath, ExportOptions options)
         {
             var convPath = Path.Combine(exportPath, conv.Id ?? Guid.NewGuid().ToString()).Replace("\\", "/");
@@ -92,20 +147,29 @@ namespace AspNetExportTemplate.Services
 
             if (options.ShouldIncludeComments)
             {
-                try
+                await foreach (var c in _connector.StreamPaginatedRequestAsync<Comment>($"https://api2.frontapp.com/conversations/{conv.Id}/comments"))
                 {
-                    await foreach (var c in _connector.StreamPaginatedRequestAsync<Comment>($"https://api2.frontapp.com/conversations/{conv.Id}/comments"))
-                    {
-                        var commentFile = Path.Combine(convPath, $"{c.PostedAt}-comment-{c.Id}.json").Replace("\\", "/");
-                        await UploadStringAsync(commentFile, JsonSerializer.Serialize(c, _jsonOptions));
-                    }
-                }
-                catch (Exception ex)
-                {
-
-                    throw;
+                    var commentFile = Path.Combine(convPath, $"{c.PostedAt}-comment-{c.Id}.json").Replace("\\", "/");
+                    await UploadStringAsync(commentFile, JsonSerializer.Serialize(c, _jsonOptions));
                 }
             }
+        }
+
+        private async Task SaveFailedExportAsync(Conversation conv, string exportPath, ExportOptions options, Exception ex)
+        {
+            var record = new FailedExport
+            {
+                ConversationId = conv.Id ?? string.Empty,
+                ExportPath = exportPath,
+                ConversationJson = JsonSerializer.Serialize(conv, _jsonOptions),
+                OptionsJson = JsonSerializer.Serialize(options),
+                FailedAt = DateTime.UtcNow,
+                RetryCount = 0,
+                LastError = ex.Message,
+                Status = FailedExportStatus.Pending
+            };
+            _db.FailedExports.Add(record);
+            await _db.SaveChangesAsync();
         }
 
         private async Task UploadStringAsync(string blobPath, string content)
@@ -148,7 +212,7 @@ namespace AspNetExportTemplate.Services
 
         private string SanitizeFileName(string name)
         {
-            foreach (var c in Path.GetInvalidFileNameChars()) 
+            foreach (var c in Path.GetInvalidFileNameChars())
                 name = name.Replace(c, '_');
             return name;
         }

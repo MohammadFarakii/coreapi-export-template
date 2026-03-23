@@ -61,5 +61,19 @@ namespace AspNetExportTemplate.Controllers
             }
             return Ok(new { inboxCount = inboxes.Count, exported = totalExported });
         }
+
+        [HttpGet("export/failed")]
+        public async Task<IActionResult> GetFailedExports()
+        {
+            var failed = await _exportService.GetFailedExportsAsync();
+            return Ok(failed);
+        }
+
+        [HttpPost("export/retry")]
+        public async Task<IActionResult> RetryFailedExports()
+        {
+            var (succeeded, failed) = await _exportService.RetryFailedExportsAsync();
+            return Ok(new { succeeded, failed });
+        }
     }
 }

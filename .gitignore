@@ -368,3 +368,6 @@ FodyWeavers.xsd
 /Website/appsettings.Development.json
 /source/Website/appsettings.Development.json
 /source/Website/appsettings.Develoment.json
+
+# Claude AI
+.claude/
