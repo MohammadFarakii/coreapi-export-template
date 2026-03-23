@@ -36,6 +36,7 @@ namespace AspNetExportTemplate.Controllers
 
         public class SearchRequest
         {
+            public string AzureFolderName { get; set; } = string.Empty;
             public string Query { get; set; } = string.Empty;
             public long? After { get; set; }
             public List<string>? Statuses { get; set; }
@@ -45,7 +46,7 @@ namespace AspNetExportTemplate.Controllers
         [HttpPost("export/search")]
         public async Task<IActionResult> ExportSearch([FromBody] SearchRequest req)
         {
-            var exported = await _exportService.ExportSearchAsync(req.Query, req.After, req.Statuses, req.Options);
+            var exported = await _exportService.ExportSearchAsync(req.AzureFolderName, req.Query, req.After, req.Statuses, req.Options);
             return Ok(new { exported });
         }
 

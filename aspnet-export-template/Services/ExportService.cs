@@ -38,7 +38,7 @@ namespace AspNetExportTemplate.Services
         }
 
         // Streamed search export: process each conversation as it arrives to minimize memory use
-        public async Task<int> ExportSearchAsync(string searchText, long? after, List<string>? statuses, ExportOptions? options)
+        public async Task<int> ExportSearchAsync(string azureFolderName, string searchText, long? after, List<string>? statuses, ExportOptions? options)
         {
             var query = BuildSearchQuery(searchText, after, statuses);
             var url = $"https://api2.frontapp.com/conversations/search/{Uri.EscapeDataString(query)}";
@@ -48,12 +48,12 @@ namespace AspNetExportTemplate.Services
             {
                 try
                 {
-                    await ExportConversationAsync(conv, "search", resolvedOptions);
+                    await ExportConversationAsync(conv, azureFolderName, resolvedOptions);
                     exported++;
                 }
                 catch (Exception ex)
                 {
-                    await SaveFailedExportAsync(conv, "search", resolvedOptions, ex);
+                    await SaveFailedExportAsync(conv, azureFolderName, resolvedOptions, ex);
                 }
             }
             return exported;
